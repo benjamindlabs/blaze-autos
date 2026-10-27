@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 
@@ -22,8 +22,6 @@ export function CinematicHero({
   getFramePath = defaultFramePath,
   scrollDistance = 3600,
 }: CinematicHeroProps) {
-  const [isLoaded, setIsLoaded] = useState(false);
-
   const containerRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -49,7 +47,7 @@ export function CinematicHero({
     currentIndexRef.current = 0;
 
     const drawFrame = (frameIndex: number) => {
-      if (!canvas || isDisposed) return;
+      if (!canvas) return;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
@@ -84,31 +82,24 @@ export function CinematicHero({
 
       ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
+      // Preserve image aspect ratio with cover-style fitting
       const imgWidth = img.naturalWidth || 1280;
       const imgHeight = img.naturalHeight || 720;
       const imageRatio = imgWidth / imgHeight;
       const canvasRatio = canvasWidth / canvasHeight;
-
-      const isMobile = window.innerWidth <= 768;
 
       let drawWidth = canvasWidth;
       let drawHeight = canvasHeight;
       let offsetX = 0;
       let offsetY = 0;
 
-      if (isMobile) {
-        // Mobile portrait: fit width with vertical centering so vehicle profile is preserved
-        drawWidth = canvasWidth;
-        drawHeight = canvasWidth / imageRatio;
-        offsetY = (canvasHeight - drawHeight) / 2;
-        offsetX = 0;
-      } else if (canvasRatio > imageRatio) {
+      if (canvasRatio > imageRatio) {
         // Viewport is wider than image (ultra-wide / landscape)
         drawWidth = canvasWidth;
         drawHeight = canvasWidth / imageRatio;
         offsetY = (canvasHeight - drawHeight) / 2;
       } else {
-        // Desktop tall / tablet
+        // Viewport is narrower than image (mobile portrait / tablet)
         drawHeight = canvasHeight;
         drawWidth = canvasHeight * imageRatio;
         offsetX = (canvasWidth - drawWidth) / 2;
@@ -118,7 +109,7 @@ export function CinematicHero({
     };
 
     const requestRender = () => {
-      if (renderRequestedRef.current || isDisposed) return;
+      if (renderRequestedRef.current) return;
       renderRequestedRef.current = true;
       requestAnimationFrame(() => {
         drawFrame(currentIndexRef.current);
@@ -127,9 +118,8 @@ export function CinematicHero({
     };
 
     const updateCanvasSize = () => {
-      if (!canvas || !hero || isDisposed) return;
-      // Cap DPR to 2 to prevent GPU memory crashes on high-density mobile screens
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (!canvas || !hero) return;
+      const dpr = window.devicePixelRatio || 1;
       const rect = hero.getBoundingClientRect();
       const pixelWidth = Math.round(rect.width * dpr);
       const pixelHeight = Math.round(rect.height * dpr);
@@ -144,99 +134,41 @@ export function CinematicHero({
       drawFrame(currentIndexRef.current);
     };
 
-    // Preload strategy: prioritize first 10 frames, fade loading overlay when 5 are ready
-    const initialBatchCount = Math.min(10, totalFrames);
-    let initialLoadedCount = 0;
-
-    const checkInitialLoadProgress = () => {
-      if (isDisposed) return;
-      let firstFiveLoaded = true;
-      for (let i = 0; i < Math.min(5, totalFrames); i++) {
-        if (!loadedRef.current[i]) {
-          firstFiveLoaded = false;
-          break;
-        }
-      }
-      if (firstFiveLoaded) {
-        setIsLoaded(true);
-        requestRender();
-      }
-    };
-
+    // Preload strategy: prioritize frame 0
     const loadRemainingFrames = () => {
-      if (isDisposed) return;
-      const BATCH_SIZE = 6;
-      let nextIndex = initialBatchCount;
-
-      const loadNextBatch = () => {
-        if (isDisposed || nextIndex >= totalFrames) return;
-        const batchEnd = Math.min(nextIndex + BATCH_SIZE, totalFrames);
-        let batchLoaded = 0;
-        const currentBatchSize = batchEnd - nextIndex;
-
-        for (let i = nextIndex; i < batchEnd; i++) {
-          const idx = i;
-          const img = new Image();
-          img.src = getFramePath(idx);
-          img.onload = () => {
-            if (isDisposed) return;
-            imagesRef.current[idx] = img;
-            loadedRef.current[idx] = true;
-            if (currentIndexRef.current === idx) {
-              requestRender();
-            }
-            batchLoaded++;
-            if (batchLoaded === currentBatchSize) {
-              nextIndex = batchEnd;
-              setTimeout(loadNextBatch, 16);
-            }
-          };
-          img.onerror = () => {
-            if (process.env.NODE_ENV === "development") {
-              console.warn(`[CinematicHero] Failed to load frame: ${img.src}`);
-            }
-            batchLoaded++;
-            if (batchLoaded === currentBatchSize) {
-              nextIndex = batchEnd;
-              setTimeout(loadNextBatch, 16);
-            }
-          };
-        }
-      };
-
-      loadNextBatch();
+      for (let i = 1; i < totalFrames; i++) {
+        if (isDisposed) break;
+        const img = new Image();
+        img.src = getFramePath(i);
+        img.onload = () => {
+          if (isDisposed) return;
+          imagesRef.current[i] = img;
+          loadedRef.current[i] = true;
+          if (currentIndexRef.current === i) {
+            requestRender();
+          }
+        };
+        img.onerror = () => {
+          if (process.env.NODE_ENV === "development") {
+            console.warn(`[CinematicHero] Failed to load frame: ${img.src}`);
+          }
+        };
+      }
     };
 
-    for (let i = 0; i < initialBatchCount; i++) {
-      const idx = i;
-      const img = new Image();
-      img.src = getFramePath(idx);
-      img.onload = () => {
-        if (isDisposed) return;
-        imagesRef.current[idx] = img;
-        loadedRef.current[idx] = true;
-        initialLoadedCount++;
-        if (idx === 0) {
-          updateCanvasSize();
-          requestRender();
-        }
-        checkInitialLoadProgress();
-
-        if (initialLoadedCount === initialBatchCount) {
-          loadRemainingFrames();
-        }
-      };
-      img.onerror = () => {
-        initialLoadedCount++;
-        if (process.env.NODE_ENV === "development") {
-          console.warn(`[CinematicHero] Failed to load initial frame: ${img.src}`);
-        }
-        checkInitialLoadProgress();
-        if (initialLoadedCount === initialBatchCount) {
-          loadRemainingFrames();
-        }
-      };
-    }
+    const firstImage = new Image();
+    firstImage.src = getFramePath(0);
+    firstImage.onload = () => {
+      if (isDisposed) return;
+      imagesRef.current[0] = firstImage;
+      loadedRef.current[0] = true;
+      updateCanvasSize();
+      requestRender();
+      loadRemainingFrames();
+    };
+    firstImage.onerror = () => {
+      console.warn(`[CinematicHero] Failed to load initial frame: ${firstImage.src}`);
+    };
 
     // Respect prefers-reduced-motion
     const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -253,7 +185,7 @@ export function CinematicHero({
           end: typeof scrollDistance === "number" ? `+=${scrollDistance}` : scrollDistance,
           pin: hero,
           pinSpacing: true,
-          scrub: 0.5, // Numerical scrub adds smoothing essential for iOS Safari
+          scrub: 0.5,
           invalidateOnRefresh: true,
           onUpdate: (self) => {
             const progress = self.progress;
@@ -287,26 +219,6 @@ export function CinematicHero({
       window.removeEventListener("resize", handleWindowResize);
       resizeObserver.disconnect();
       ctx.revert();
-
-      // Release image references to free mobile GPU/RAM
-      imagesRef.current.forEach((img) => {
-        if (img) {
-          img.onload = null;
-          img.onerror = null;
-          img.src = "";
-        }
-      });
-      imagesRef.current = [];
-      loadedRef.current = [];
-
-      // Clear canvas buffer
-      if (canvasRef.current) {
-        const c = canvasRef.current;
-        const context = c.getContext("2d");
-        context?.clearRect(0, 0, c.width, c.height);
-        c.width = 0;
-        c.height = 0;
-      }
     };
   }, [totalFrames, getFramePath, scrollDistance]);
 
@@ -314,24 +226,22 @@ export function CinematicHero({
     <div
       ref={containerRef}
       className="relative w-full bg-black select-none"
-      style={{ minHeight: "100dvh" }}
+      style={{ minHeight: "100vh" }}
     >
       <div
         ref={heroRef}
-        className="relative w-full h-screen h-[100dvh] overflow-hidden bg-black flex items-center justify-center"
+        className="relative w-full h-screen overflow-hidden bg-black flex items-center justify-center"
       >
         <canvas
           ref={canvasRef}
-          className="cinematic-canvas w-full h-full block pointer-events-none object-cover touch-pan-y"
+          className="w-full h-full block pointer-events-none object-cover"
           style={{
             filter: "blur(1.5px) contrast(1.05) brightness(0.95)",
             transform: "translateZ(0) scale(1.01)",
-            touchAction: "pan-y",
           }}
           aria-label="Cinematic automotive sequence"
           role="img"
         />
-
         {/* Subtle dark vignette overlay to blend edges and mask banding */}
         <div
           className="pointer-events-none absolute inset-0 z-10"
@@ -341,16 +251,6 @@ export function CinematicHero({
           }}
           aria-hidden="true"
         />
-
-        {/* Initial loading screen that fades out once the first 5 frames are ready */}
-        <div
-          className={`pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center bg-black transition-opacity duration-700 ease-out ${
-            isLoaded ? "opacity-0" : "opacity-100"
-          }`}
-          aria-hidden={isLoaded}
-        >
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-800 border-t-zinc-200" />
-        </div>
       </div>
     </div>
   );
